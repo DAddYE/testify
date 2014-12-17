@@ -45,7 +45,6 @@ type Assertions struct {
 func New(t TestingT) *Assertions {
 	return &Assertions{ t: t}
 }
-
 {{range .}}
 {{.Doc}}
 func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {

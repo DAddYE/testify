@@ -11,7 +11,6 @@ func New(t TestingT) *Assertions {
 	return &Assertions{ t: t}
 }
 
-
 // Fail reports a failure through
 func (a *Assertions) Fail(failureMessage string, msgAndArgs ...interface{}) bool {
 	return Fail(a.t, failureMessage, msgAndArgs)
