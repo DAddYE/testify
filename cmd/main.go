@@ -10,12 +10,67 @@ import (
 	"text/template"
 )
 
+const assertions = `// auto genrated file, do not edit
+package assert
+
+import "time"
+
+type Assertions struct {
+	t TestingT
+}
+
+func New(t TestingT) *Assertions {
+	return &Assertions{t: t}
+}
+{{range .}}
+{{.Doc}}
+func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {
+	return {{.Name}}(a.t, {{.Values}})
+}
+{{end}}`
+
+const requirements = `// auto generated file, do not edit
+package require
+
+import (
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+type TestingT interface {
+	Errorf(format string, args ...interface{})
+	FailNow()
+}
+
+// Fail reports a failure through
+func FailNow(t TestingT, failureMessage string, msgAndArgs ...interface{}) {
+	assert.Fail(t, failureMessage, msgAndArgs...)
+	t.FailNow()
+}
+{{range .}}
+{{.DocRequire}}
+func {{.Name}}(t TestingT, {{.ParamsRequire}}) {
+	if !assert.{{.Name}}(t, {{.Values}}) {
+		t.FailNow()
+	}
+}
+{{end}}`
+
+// used to prefix assert types in the require package
+var assertTypes = []string{
+	"Comparison",
+	"PanicTestFunc",
+}
+
 type Node struct {
-	Doc     string
-	Name    string
-	Params  string
-	Values  string
-	Results string
+	Doc           string
+	DocRequire    string
+	Name          string
+	Params        string
+	ParamsRequire string
+	Values        string
+	Results       string
 }
 
 func main() {
@@ -27,30 +82,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("parsing error: %s", err)
 	}
-
-	out, err := os.OpenFile("./assert/assertions_forward.go", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0600)
-	if err != nil {
-		log.Fatalf("open file: %s", err)
-	}
-
-	tpl := `// autogenrated file, do not edit
-package assert
-
-import "time"
-
-type Assertions struct {
-	t TestingT
-}
-
-func New(t TestingT) *Assertions {
-	return &Assertions{ t: t}
-}
-{{range .}}
-{{.Doc}}
-func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {
-	return {{.Name}}(a.t, {{.Values}})
-}
-{{end}}`
 
 	var nodes []Node
 
@@ -68,19 +99,32 @@ func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {
 		node := Node{Name: fn.Name.Name}
 
 		// add back the comment
-		docs := make([]string, len(fn.Doc.List))
-		for i, doc := range fn.Doc.List {
-			docs[i] = strings.Replace(doc.Text, "(t, ", "(", -1)
+		var docsAssert, docsRequire []string
+
+		for _, doc := range fn.Doc.List {
+			docsAssert = append(docsAssert, strings.Replace(doc.Text, "(t, ", "(", -1))
+			docsRequire = append(docsRequire, strings.Replace(doc.Text, "assert.", "require.", -1))
 		}
-		node.Doc = strings.Join(docs, "\n")
+
+		node.Doc = strings.Join(docsAssert, "\n")
+		node.DocRequire = strings.Join(docsRequire, "\n")
 
 		// parse the parameters
-		var params, values []string
+		var params, paramsRequire, values []string
 
 		for _, param := range fn.Type.Params.List {
 			t := getType(param.Type)
+			tr := t
+
 			if t == "TestingT" {
 				continue
+			}
+
+			// prefix assert types for the require package
+			for _, match := range assertTypes {
+				if match == t {
+					tr = "assert." + t
+				}
 			}
 
 			names := make([]string, len(param.Names))
@@ -89,10 +133,12 @@ func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {
 			}
 
 			params = append(params, strings.Join(names, ", ")+" "+t)
+			paramsRequire = append(paramsRequire, strings.Join(names, ", ")+" "+tr)
 			values = append(values, strings.Join(names, ", "))
 		}
 
 		node.Params = strings.Join(params, ", ")
+		node.ParamsRequire = strings.Join(paramsRequire, ", ")
 		node.Values = strings.Join(values, ", ")
 
 		// parse the results
@@ -123,16 +169,42 @@ func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {
 		nodes = append(nodes, node)
 	}
 
-	t, err := template.New("gen").Parse(tpl)
-	if err != nil {
-		log.Fatalf("template parsing error: %s", err)
+	{ // assertions_forward template
+		out, err := os.OpenFile("./assert/assertions_forward.go", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0600)
+		if err != nil {
+			log.Fatalf("open assertions_forward.go: %s", err)
+		}
+
+		t, err := template.New("gen").Parse(assertions)
+		if err != nil {
+			log.Fatalf("assertions template error: %s", err)
+		}
+
+		t.Execute(out, nodes)
+
+		if err := out.Close(); err != nil {
+			log.Fatalf("error closing assertions_forward.go: %s", err)
+		}
 	}
 
-	t.Execute(out, nodes)
+	{ // requirements template
+		out, err := os.OpenFile("./require/requirements.go", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0600)
+		if err != nil {
+			log.Fatalf("open requirements.go: %s", err)
+		}
 
-	if err := out.Close(); err != nil {
-		log.Fatalf("error closing file: %s", err)
+		t, err := template.New("gen").Parse(requirements)
+		if err != nil {
+			log.Fatalf("requirements template error: %s", err)
+		}
+
+		t.Execute(out, nodes)
+
+		if err := out.Close(); err != nil {
+			log.Fatalf("error closing requirements.go: %s", err)
+		}
 	}
+
 }
 
 func getType(expr ast.Expr) string {

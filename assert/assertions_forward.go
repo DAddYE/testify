@@ -1,4 +1,4 @@
-// autogenrated file, do not edit
+// auto genrated file, do not edit
 package assert
 
 import "time"
@@ -8,7 +8,7 @@ type Assertions struct {
 }
 
 func New(t TestingT) *Assertions {
-	return &Assertions{ t: t}
+	return &Assertions{t: t}
 }
 
 // Fail reports a failure through
