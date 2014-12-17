@@ -22,8 +22,8 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("gen: ")
 
-	fs := token.NewFileSet()
-	pf, err := parser.ParseFile(fs, "./assert/assertions.go", nil, 0)
+	fset := token.NewFileSet()
+	parser, err := parser.ParseFile(fset, "./assert/assertions.go", nil, parser.ParseComments)
 	if err != nil {
 		log.Fatalf("parsing error: %s", err)
 	}
@@ -33,8 +33,7 @@ func main() {
 		log.Fatalf("open file: %s", err)
 	}
 
-	tpl := `
-// autogenrated file, do not edit
+	tpl := `// autogenrated file, do not edit
 package assert
 
 import "time"
@@ -48,15 +47,15 @@ func New(t TestingT) *Assertions {
 }
 
 {{range .}}
-func (a *Asseritions) {{.Name}}({{.Params}}) {{.Results}} {
+{{.Doc}}
+func (a *Assertions) {{.Name}}({{.Params}}) {{.Results}} {
 	return {{.Name}}(a.t, {{.Values}})
 }
-{{end}}
-`
+{{end}}`
 
 	var nodes []Node
 
-	for _, decl := range pf.Decls {
+	for _, decl := range parser.Decls {
 
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || !ast.IsExported(fn.Name.Name) || fn.Type.Params.NumFields() == 0 {
@@ -67,10 +66,14 @@ func (a *Asseritions) {{.Name}}({{.Params}}) {{.Results}} {
 			continue
 		}
 
-		node := Node{
-			Name: fn.Name.Name,
-			Doc:  fn.Doc.Text(),
+		node := Node{Name: fn.Name.Name}
+
+		// add back the comment
+		docs := make([]string, len(fn.Doc.List))
+		for i, doc := range fn.Doc.List {
+			docs[i] = strings.Replace(doc.Text, "(t, ", "(", -1)
 		}
+		node.Doc = strings.Join(docs, "\n")
 
 		// parse the parameters
 		var params, values []string
@@ -126,9 +129,11 @@ func (a *Asseritions) {{.Name}}({{.Params}}) {{.Results}} {
 		log.Fatalf("template parsing error: %s", err)
 	}
 
-	t.Execute(os.Stdout, nodes)
+	t.Execute(out, nodes)
 
-	_ = out
+	if err := out.Close(); err != nil {
+		log.Fatalf("error closing file: %s", err)
+	}
 }
 
 func getType(expr ast.Expr) string {
@@ -144,10 +149,9 @@ func getType(expr ast.Expr) string {
 	case *ast.InterfaceType:
 		return "interface{}"
 	case *ast.SelectorExpr:
-		return "." + getType(x.Sel)
+		return getType(x.X) + "." + getType(x.Sel)
 	default:
 		log.Fatalf("unknow type: %#+v", x)
+		return "<unknow T>"
 	}
-
-	return "<unknow T>"
 }
